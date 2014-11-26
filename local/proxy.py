@@ -1375,6 +1375,11 @@ class Common(object):
         self.PHP_CRLF = self.CONFIG.getint('php', 'crlf') if self.CONFIG.has_option('php', 'crlf') else 1
         self.PHP_VALIDATE = self.CONFIG.getint('php', 'validate') if self.CONFIG.has_option('php', 'validate') else 0
         self.PHP_FETCHSERVERS = self.CONFIG.get('php', 'fetchserver').split('|')
+        self.PHP_HOSTS = self.CONFIG.get('php', 'hosts').split('|') if self.CONFIG.get('php', 'hosts') else []
+        if self.PHP_HOSTS:
+            self.IPLIST_PREDEFINED = list(set(self.IPLIST_PREDEFINED + self.PHP_HOSTS))
+            for fetchserver in self.PHP_FETCHSERVERS:
+                self.HOST_MAP[urlparse.urlsplit(fetchserver).hostname] = self.PHP_HOSTS
 
         self.PROXY_ENABLE = self.CONFIG.getint('proxy', 'enable')
         self.PROXY_AUTODETECT = self.CONFIG.getint('proxy', 'autodetect') if self.CONFIG.has_option('proxy', 'autodetect') else 0
