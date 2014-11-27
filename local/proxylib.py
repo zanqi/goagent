@@ -1620,7 +1620,6 @@ class Net2(object):
         self.dns_servers = dns_servers
         self.dns_blacklist = dns_blacklist
         self.dns_cache = LRUCache(dns_cachesize)
-        self.iplist_predefined = set([])
         self.tcp_connection_time = collections.defaultdict(float)
         self.tcp_connection_time_with_clienthello = collections.defaultdict(float)
         self.tcp_connection_cache = collections.defaultdict(Queue.PriorityQueue)
@@ -1637,6 +1636,7 @@ class Net2(object):
         self.ssl_connection_cachesock = False
         self.ssl_connection_keepalive = False
         self.iplist_map = {}
+        self.iplist_predefined = set([])
         self.host_map = {}
         self.host_postfix_map = {}
         self.host_postfix_endswith = tuple()
@@ -1645,36 +1645,72 @@ class Net2(object):
         self.hostport_postfix_endswith = {}
         self.urlre_map = {}
 
-    def add_rule(self, rule, host):
-        assert isinstance(hostname, basestring) and isinstance(iplist, list)
-        if fixed:
-            self.dns_fixed[hostname] = iplist[:]
-        else:
-            self.dns_cache[hostname] = iplist[:]
+    def add_iplist_map(self, name, iplist):
+        assert isinstance(name, basestring) and isinstance(iplist, list)
+        self.iplist_map[name] = list(set(self.iplist_map.get(name, []) + iplist))
 
-    def gethostsbyname(self, hostname):
-        hostport = '%s:%d' % (hostname, handler.port)
-        hosts = ''
-        if hostname in self.host_map:
-            hosts = self.host_map[hostname]
-        elif hostname.endswith(self.host_postfix_endswith):
-            hosts = next(self.host_postfix_map[x] for x in self.host_postfix_map if hostname.endswith(x))
-        if hostport in self.hostport_map:
-            hosts = self.hostport_map[hostport]
-        elif hostport.endswith(self.hostport_postfix_endswith):
-            hosts = next(self.hostport_postfix_map[x] for x in self.hostport_postfix_map if hostport.endswith(x))
-        if handler.command != 'CONNECT' and self.urlre_map:
+    def add_iplist_predefined(self, iplist):
+        assert isinstance(iplist, list)
+        for ip in iplist:
+            self.iplist_predefined.add(ip)
+
+    def add_rule(self, pattern, hosts):
+        assert isinstance(pattern, basestring) and isinstance(hosts, basestring)
+        if ':' in pattern and '\\' not in pattern:
+            if pattern.startswith('.'):
+                self.hostport_postfix_map[pattern] = hosts
+            else:
+                self.hostport_map[pattern] = hosts
+        elif '\\' in pattern:
+            self.urlre_map[re.compile(pattern).match] = hosts
+        else:
+            if pattern.startswith('.'):
+                self.host_postfix_map[pattern] = hosts
+            else:
+                self.host_map[pattern] = hosts
+
+    def resolv(self, fun):
+        def wrapper(*args, **kwargs):
+            hosts = fun(*args, **kwargs)
+            return self.iplist_map.get(hosts) or hosts
+        return wrapper
+
+    @resolv
+    def gethostsbyurl(self, url):
+        if self.urlre_map:
             try:
-                hosts = next(self.urlre_map[x] for x in self.urlre_map if x(handler.path))
+                return next(self.urlre_map[x] for x in self.urlre_map if x(url))
             except StopIteration:
                 pass
-        if hosts not in ('', 'direct'):
-            return self.iplist_map.get(hosts) or hosts.split('|')
-        return None
+        netloc = urlparse.urlsplit(url).netloc
+        m = re.match(r'^(.+):(\d+)$', url)
+        if m:
+            return self.gethostsbyaddr((m.group(1), int(m.group(2))))
+        else:
+            return self.gethostsbyname(netloc)
+
+    def gethostsbyaddr(self, address):
+        hostport = '%s:%d' % address
         try:
-            return self.dns_fixed[hostname]
+            return self.hostport_map[hostport]
         except LookupError:
             pass
+        if hostport.endswith(self.hostport_postfix_endswith):
+            return next(self.hostport_postfix_map[x] for x in self.hostport_postfix_map if hostport.endswith(x))
+        else:
+            return self.gethostsbyname(address[0])
+
+    def gethostsbyname(self, hostname):
+        try:
+            return self.host_map[hostname]
+        except LookupError:
+            pass
+        if hostname.endswith(self.host_postfix_endswith):
+            return next(self.host_postfix_map[x] for x in self.host_postfix_map if hostname.endswith(x))
+        else:
+            return self._gethostsbyname(hostname)
+
+    def _gethostsbyname(self, hostname):
         try:
             iplist = self.dns_cache[hostname]
         except KeyError:
